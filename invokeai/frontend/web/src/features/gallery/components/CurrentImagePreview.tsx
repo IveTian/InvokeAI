@@ -1,28 +1,38 @@
 import { Box, Flex, Image } from '@chakra-ui/react';
 import { createSelector } from '@reduxjs/toolkit';
-import { useAppSelector } from 'app/storeHooks';
-import { GalleryState } from 'features/gallery/store/gallerySlice';
+import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
 import { uiSelector } from 'features/ui/store/uiSelectors';
-import { isEqual } from 'lodash';
-import { APP_METADATA_HEIGHT } from 'theme/util/constants';
+import { isEqual } from 'lodash-es';
 
 import { gallerySelector } from '../store/gallerySelectors';
-import CurrentImageFallback from './CurrentImageFallback';
 import ImageMetadataViewer from './ImageMetaDataViewer/ImageMetadataViewer';
 import NextPrevImageButtons from './NextPrevImageButtons';
-import CurrentImageHidden from './CurrentImageHidden';
+import { memo, useCallback } from 'react';
+import { systemSelector } from 'features/system/store/systemSelectors';
+import { configSelector } from '../../system/store/configSelectors';
+import { useAppToaster } from 'app/components/Toaster';
+import { imageSelected } from '../store/gallerySlice';
+import IAIDndImage from 'common/components/IAIDndImage';
+import { ImageDTO } from 'services/api';
+import { IAIImageFallback } from 'common/components/IAIImageFallback';
 
 export const imagesSelector = createSelector(
-  [gallerySelector, uiSelector],
-  (gallery: GalleryState, ui) => {
-    const { currentImage, intermediateImage } = gallery;
-    const { shouldShowImageDetails, shouldHidePreview } = ui;
-
-    return {
-      imageToDisplay: intermediateImage ? intermediateImage : currentImage,
-      isIntermediate: Boolean(intermediateImage),
+  [uiSelector, gallerySelector, systemSelector],
+  (ui, gallery, system) => {
+    const {
       shouldShowImageDetails,
       shouldHidePreview,
+      shouldShowProgressInViewer,
+    } = ui;
+    const { selectedImage } = gallery;
+    const { progressImage, shouldAntialiasProgressImage } = system;
+    return {
+      shouldShowImageDetails,
+      shouldHidePreview,
+      image: selectedImage,
+      progressImage,
+      shouldShowProgressInViewer,
+      shouldAntialiasProgressImage,
     };
   },
   {
@@ -32,63 +42,98 @@ export const imagesSelector = createSelector(
   }
 );
 
-export default function CurrentImagePreview() {
+const CurrentImagePreview = () => {
   const {
     shouldShowImageDetails,
-    imageToDisplay,
-    isIntermediate,
-    shouldHidePreview,
+    image,
+    progressImage,
+    shouldShowProgressInViewer,
+    shouldAntialiasProgressImage,
   } = useAppSelector(imagesSelector);
+  const dispatch = useAppDispatch();
+
+  const handleDrop = useCallback(
+    (droppedImage: ImageDTO) => {
+      if (droppedImage.image_name === image?.image_name) {
+        return;
+      }
+      dispatch(imageSelected(droppedImage));
+    },
+    [dispatch, image?.image_name]
+  );
 
   return (
     <Flex
       sx={{
+        width: 'full',
+        height: 'full',
         position: 'relative',
-        justifyContent: 'center',
         alignItems: 'center',
-        width: '100%',
-        height: '100%',
+        justifyContent: 'center',
       }}
     >
-      {imageToDisplay && (
+      {progressImage && shouldShowProgressInViewer ? (
         <Image
-          src={shouldHidePreview ? undefined : imageToDisplay.url}
-          width={imageToDisplay.width}
-          height={imageToDisplay.height}
-          fallback={
-            shouldHidePreview ? (
-              <CurrentImageHidden />
-            ) : !isIntermediate ? (
-              <CurrentImageFallback />
-            ) : undefined
-          }
+          src={progressImage.dataURL}
+          width={progressImage.width}
+          height={progressImage.height}
+          draggable={false}
           sx={{
             objectFit: 'contain',
-            maxWidth: '100%',
-            maxHeight: '100%',
+            maxWidth: 'full',
+            maxHeight: 'full',
             height: 'auto',
             position: 'absolute',
-            imageRendering: isIntermediate ? 'pixelated' : 'initial',
             borderRadius: 'base',
+            imageRendering: shouldAntialiasProgressImage ? 'auto' : 'pixelated',
           }}
         />
+      ) : (
+        <Flex
+          sx={{
+            width: 'full',
+            height: 'full',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <IAIDndImage
+            image={image}
+            onDrop={handleDrop}
+            fallback={<IAIImageFallback sx={{ bg: 'none' }} />}
+            isUploadDisabled={true}
+          />
+        </Flex>
       )}
-      {!shouldShowImageDetails && <NextPrevImageButtons />}
-      {shouldShowImageDetails && imageToDisplay && (
+      {shouldShowImageDetails && image && (
         <Box
           sx={{
             position: 'absolute',
             top: '0',
-            width: '100%',
-            height: '100%',
+            width: 'full',
+            height: 'full',
             borderRadius: 'base',
             overflow: 'scroll',
-            maxHeight: APP_METADATA_HEIGHT,
           }}
         >
-          <ImageMetadataViewer image={imageToDisplay} />
+          <ImageMetadataViewer image={image} />
+        </Box>
+      )}
+      {!shouldShowImageDetails && image && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: '0',
+            width: 'full',
+            height: 'full',
+            pointerEvents: 'none',
+          }}
+        >
+          <NextPrevImageButtons />
         </Box>
       )}
     </Flex>
   );
-}
+};
+
+export default memo(CurrentImagePreview);

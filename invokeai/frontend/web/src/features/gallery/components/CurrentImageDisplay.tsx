@@ -1,67 +1,65 @@
-import { Flex, Icon } from '@chakra-ui/react';
+import { Box, Flex } from '@chakra-ui/react';
 import { createSelector } from '@reduxjs/toolkit';
-import { useAppSelector } from 'app/storeHooks';
-import { isEqual } from 'lodash';
+import { useAppSelector } from 'app/store/storeHooks';
+import { systemSelector } from 'features/system/store/systemSelectors';
+import { isEqual } from 'lodash-es';
 
-import { MdPhoto } from 'react-icons/md';
 import { gallerySelector } from '../store/gallerySelectors';
 import CurrentImageButtons from './CurrentImageButtons';
 import CurrentImagePreview from './CurrentImagePreview';
+import { defaultSelectorOptions } from 'app/store/util/defaultMemoizeOptions';
 
 export const currentImageDisplaySelector = createSelector(
-  [gallerySelector],
-  (gallery) => {
-    const { currentImage, intermediateImage } = gallery;
+  [systemSelector, gallerySelector],
+  (system, gallery) => {
+    const { progressImage } = system;
 
     return {
-      hasAnImageToDisplay: currentImage || intermediateImage,
+      hasSelectedImage: Boolean(gallery.selectedImage),
+      hasProgressImage: Boolean(progressImage),
     };
   },
-  {
-    memoizeOptions: {
-      resultEqualityCheck: isEqual,
-    },
-  }
+  defaultSelectorOptions
 );
 
 /**
  * Displays the current image if there is one, plus associated actions.
  */
 const CurrentImageDisplay = () => {
-  const { hasAnImageToDisplay } = useAppSelector(currentImageDisplaySelector);
+  const { hasSelectedImage, hasProgressImage } = useAppSelector(
+    currentImageDisplaySelector
+  );
 
   return (
     <Flex
       sx={{
+        position: 'relative',
         flexDirection: 'column',
         height: '100%',
         width: '100%',
         rowGap: 4,
         borderRadius: 'base',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
     >
-      {hasAnImageToDisplay ? (
-        <>
+      <Flex
+        flexDirection="column"
+        sx={{
+          w: 'full',
+          h: 'full',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          position: 'absolute',
+        }}
+      >
+        <CurrentImagePreview />
+      </Flex>
+      {hasSelectedImage && (
+        <Box sx={{ position: 'absolute', top: 0 }}>
           <CurrentImageButtons />
-          <CurrentImagePreview />
-        </>
-      ) : (
-        <Flex
-          sx={{
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '100%',
-            height: '100%',
-          }}
-        >
-          <Icon
-            as={MdPhoto}
-            sx={{
-              boxSize: 24,
-              color: 'base.500',
-            }}
-          />
-        </Flex>
+        </Box>
       )}
     </Flex>
   );

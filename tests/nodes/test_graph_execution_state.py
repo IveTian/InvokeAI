@@ -25,6 +25,7 @@ def mock_services():
     return InvocationServices(
         model_manager = None, # type: ignore
         events = None, # type: ignore
+        logger = None, # type: ignore
         images = None, # type: ignore
         latents = None, # type: ignore
         queue = MemoryInvocationQueue(),
@@ -34,6 +35,7 @@ def mock_services():
         graph_execution_manager = SqliteItemStorage[GraphExecutionState](filename = sqlite_memory, table_name = 'graph_executions'),
         processor = DefaultInvocationProcessor(),
         restoration = None, # type: ignore
+        configuration = None, # type: ignore
     )
 
 def invoke_next(g: GraphExecutionState, services: InvocationServices) -> tuple[BaseInvocation, BaseInvocationOutput]:

@@ -1,5 +1,5 @@
 import IAIButton from 'common/components/IAIButton';
-import IAICheckbox from 'common/components/IAICheckbox';
+import IAISimpleCheckbox from 'common/components/IAISimpleCheckbox';
 import IAIIconButton from 'common/components/IAIIconButton';
 import React from 'react';
 
@@ -14,24 +14,24 @@ import {
   Text,
 } from '@chakra-ui/react';
 import { createSelector } from '@reduxjs/toolkit';
-import { useAppDispatch, useAppSelector } from 'app/storeHooks';
+import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
 import { systemSelector } from 'features/system/store/systemSelectors';
 import { useTranslation } from 'react-i18next';
 
 import { FaSearch, FaTrash } from 'react-icons/fa';
 
-import { addNewModel, searchForModels } from 'app/socketio/actions';
+// import { addNewModel, searchForModels } from 'app/socketio/actions';
 import {
   setFoundModels,
   setSearchFolder,
 } from 'features/system/store/systemSlice';
 import { setShouldShowExistingModelsInSearch } from 'features/ui/store/uiSlice';
 
-import type { FoundModel } from 'app/invokeai';
-import type { RootState } from 'app/store';
+import type { FoundModel } from 'app/types/invokeai';
+import type { RootState } from 'app/store/store';
 import IAIInput from 'common/components/IAIInput';
 import { Field, Formik } from 'formik';
-import { forEach, remove } from 'lodash';
+import { forEach, remove } from 'lodash-es';
 import type { ChangeEvent, ReactNode } from 'react';
 import IAIForm from 'common/components/IAIForm';
 
@@ -81,13 +81,13 @@ function SearchModelEntry({
       borderRadius={4}
     >
       <Flex gap={4} alignItems="center" justifyContent="space-between">
-        <IAICheckbox
+        <IAISimpleCheckbox
           value={model.name}
           label={<Text fontWeight={500}>{model.name}</Text>}
           isChecked={modelsToAdd.includes(model.name)}
           isDisabled={existingModels.includes(model.location)}
           onChange={foundModelsChangeHandler}
-        ></IAICheckbox>
+        ></IAISimpleCheckbox>
         {existingModels.includes(model.location) && (
           <Badge colorScheme="accent">{t('modelManager.modelExists')}</Badge>
         )}
@@ -324,7 +324,7 @@ export default function SearchModels() {
               >
                 {t('modelManager.deselectAll')}
               </IAIButton>
-              <IAICheckbox
+              <IAISimpleCheckbox
                 label={t('modelManager.showExisting')}
                 isChecked={shouldShowExistingModelsInSearch}
                 onChange={() =>

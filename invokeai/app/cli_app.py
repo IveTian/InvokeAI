@@ -4,36 +4,41 @@ import argparse
 import os
 import re
 import shlex
+import sys
 import time
 from typing import (
     Union,
     get_type_hints,
 )
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.fields import Field
+from invokeai.app.services.image_record_storage import SqliteImageRecordStorage
+from invokeai.app.services.images import ImageService
+from invokeai.app.services.metadata import CoreMetadataService
+from invokeai.app.services.resource_name import SimpleNameService
+from invokeai.app.services.urls import LocalUrlService
 
+
+import invokeai.backend.util.logging as logger
 from .services.default_graphs import create_system_graphs
-
 from .services.latent_storage import DiskLatentsStorage, ForwardCacheLatentsStorage
 
-from ..backend import Args
-from .cli.commands import BaseCommand, CliContext, ExitCli, add_graph_parsers, add_parsers, get_graph_execution_history
+from .cli.commands import BaseCommand, CliContext, ExitCli, add_graph_parsers, add_parsers, SortedHelpFormatter
 from .cli.completer import set_autocompleter
-from .invocations import *
 from .invocations.baseinvocation import BaseInvocation
 from .services.events import EventServiceBase
 from .services.model_manager_initializer import get_model_manager
 from .services.restoration_services import RestorationServices
-from .services.graph import Edge, EdgeConnection, ExposedNodeInput, GraphExecutionState, GraphInvocation, LibraryGraph, are_connection_types_compatible
+from .services.graph import Edge, EdgeConnection, GraphExecutionState, GraphInvocation, LibraryGraph, are_connection_types_compatible
 from .services.default_graphs import default_text_to_image_graph_id
-from .services.image_storage import DiskImageStorage
+from .services.image_file_storage import DiskImageFileStorage
 from .services.invocation_queue import MemoryInvocationQueue
 from .services.invocation_services import InvocationServices
 from .services.invoker import Invoker
 from .services.processor import DefaultInvocationProcessor
 from .services.sqlite import SqliteItemStorage
-
+from .services.config import InvokeAIAppConfig
 
 class CliCommand(BaseModel):
     command: Union[BaseCommand.get_commands() + BaseInvocation.get_invocations()] = Field(discriminator="type")  # type: ignore
@@ -63,7 +68,7 @@ def add_invocation_args(command_parser):
 
 def get_command_parser(services: InvocationServices) -> argparse.ArgumentParser:
     # Create invocation parser
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=SortedHelpFormatter)
 
     def exit(*args, **kwargs):
         raise InvalidArgs
@@ -180,47 +185,78 @@ def invoke_all(context: CliContext):
     # Print any errors
     if context.session.has_error():
         for n in context.session.errors:
-            print(
+            context.invoker.services.logger.error(
                 f"Error in node {n} (source node {context.session.prepared_source_mapping[n]}): {context.session.errors[n]}"
             )
         
         raise SessionError()
 
 
+logger = logger.InvokeAILogger.getLogger()
+
+
 def invoke_cli():
-    config = Args()
+    # this gets the basic configuration
+    config = InvokeAIAppConfig.get_config()
     config.parse_args()
-    model_manager = get_model_manager(config)
 
-    # This initializes the autocompleter and returns it.
-    # Currently nothing is done with the returned Completer
-    # object, but the object can be used to change autocompletion
-    # behavior on the fly, if desired.
-    completer = set_autocompleter(model_manager)
+    # get the optional list of invocations to execute on the command line
+    parser = config.get_parser()
+    parser.add_argument('commands',nargs='*')
+    invocation_commands = parser.parse_args().commands
 
+    # get the optional file to read commands from.
+    # Simplest is to use it for STDIN
+    if infile := config.from_file:
+        sys.stdin = open(infile,"r")
+    
+    model_manager = get_model_manager(config,logger=logger)
+    
     events = EventServiceBase()
-
-    output_folder = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../../outputs")
-    )
+    output_folder = config.output_path
 
     # TODO: build a file/path manager?
-    db_location = os.path.join(output_folder, "invokeai.db")
+    if config.use_memory_db:
+        db_location = ":memory:"
+    else:
+        db_location = os.path.join(output_folder, "invokeai.db")
+
+    logger.info(f'InvokeAI database location is "{db_location}"')
+
+    graph_execution_manager = SqliteItemStorage[GraphExecutionState](
+            filename=db_location, table_name="graph_executions"
+        )
+
+    urls = LocalUrlService()
+    metadata = CoreMetadataService()
+    image_record_storage = SqliteImageRecordStorage(db_location)
+    image_file_storage = DiskImageFileStorage(f"{output_folder}/images")
+    names = SimpleNameService()
+
+    images = ImageService(
+        image_record_storage=image_record_storage,
+        image_file_storage=image_file_storage,
+        metadata=metadata,
+        url=urls,
+        logger=logger,
+        names=names,
+        graph_execution_manager=graph_execution_manager,
+    )
 
     services = InvocationServices(
         model_manager=model_manager,
         events=events,
         latents = ForwardCacheLatentsStorage(DiskLatentsStorage(f'{output_folder}/latents')),
-        images=DiskImageStorage(f'{output_folder}/images'),
+        images=images,
         queue=MemoryInvocationQueue(),
         graph_library=SqliteItemStorage[LibraryGraph](
             filename=db_location, table_name="graphs"
         ),
-        graph_execution_manager=SqliteItemStorage[GraphExecutionState](
-            filename=db_location, table_name="graph_executions"
-        ),
+        graph_execution_manager=graph_execution_manager,
         processor=DefaultInvocationProcessor(),
-        restoration=RestorationServices(config),
+        restoration=RestorationServices(config,logger=logger),
+        logger=logger,
+        configuration=config,
     )
 
     system_graphs = create_system_graphs(services.graph_library)
@@ -236,10 +272,18 @@ def invoke_cli():
     # print(services.session_manager.list())
 
     context = CliContext(invoker, session, parser)
+    set_autocompleter(services)
 
-    while True:
+    command_line_args_exist = len(invocation_commands) > 0
+    done = False
+    
+    while not done:
         try:
-            cmd_input = input("invoke> ")
+            if command_line_args_exist:
+                cmd_input = invocation_commands.pop(0)
+                done = len(invocation_commands) == 0
+            else:
+                cmd_input = input("invoke> ")
         except (KeyboardInterrupt, EOFError):
             # Ctrl-c exits
             break
@@ -360,12 +404,15 @@ def invoke_cli():
             invoke_all(context)
 
         except InvalidArgs:
-            print('Invalid command, use "help" to list commands')
+            invoker.services.logger.warning('Invalid command, use "help" to list commands')
             continue
+
+        except ValidationError:
+            invoker.services.logger.warning('Invalid command arguments, run "<command> --help" for summary')
 
         except SessionError:
             # Start a new session
-            print("Session error: creating a new session")
+            invoker.services.logger.warning("Session error: creating a new session")
             context.reset()
 
         except ExitCli:

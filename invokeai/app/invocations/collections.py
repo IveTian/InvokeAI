@@ -1,16 +1,17 @@
-# Copyright (c) 2023 Kyle Schouviller (https://github.com/kyle0654)
+# Copyright (c) 2023 Kyle Schouviller (https://github.com/kyle0654) and the InvokeAI Team
 
 from typing import Literal
 
-import cv2 as cv
 import numpy as np
-import numpy.random
-from PIL import Image, ImageOps
-from pydantic import Field
+from pydantic import Field, validator
 
-from ..services.image_storage import ImageType
-from .baseinvocation import BaseInvocation, InvocationContext, BaseInvocationOutput
-from .image import ImageField, ImageOutput
+from invokeai.app.util.misc import SEED_MAX, get_random_seed
+
+from .baseinvocation import (
+    BaseInvocation,
+    InvocationContext,
+    BaseInvocationOutput,
+)
 
 
 class IntCollectionOutput(BaseInvocationOutput):
@@ -21,9 +22,17 @@ class IntCollectionOutput(BaseInvocationOutput):
     # Outputs
     collection: list[int] = Field(default=[], description="The int collection")
 
+class FloatCollectionOutput(BaseInvocationOutput):
+    """A collection of floats"""
+
+    type: Literal["float_collection"] = "float_collection"
+
+    # Outputs
+    collection: list[float] = Field(default=[], description="The float collection")
+
 
 class RangeInvocation(BaseInvocation):
-    """Creates a range"""
+    """Creates a range of numbers from start to stop with step"""
 
     type: Literal["range"] = "range"
 
@@ -32,8 +41,32 @@ class RangeInvocation(BaseInvocation):
     stop: int = Field(default=10, description="The stop of the range")
     step: int = Field(default=1, description="The step of the range")
 
+    @validator("stop")
+    def stop_gt_start(cls, v, values):
+        if "start" in values and v <= values["start"]:
+            raise ValueError("stop must be greater than start")
+        return v
+
     def invoke(self, context: InvocationContext) -> IntCollectionOutput:
-        return IntCollectionOutput(collection=list(range(self.start, self.stop, self.step)))
+        return IntCollectionOutput(
+            collection=list(range(self.start, self.stop, self.step))
+        )
+
+
+class RangeOfSizeInvocation(BaseInvocation):
+    """Creates a range from start to start + size with step"""
+
+    type: Literal["range_of_size"] = "range_of_size"
+
+    # Inputs
+    start: int = Field(default=0, description="The start of the range")
+    size: int = Field(default=1, description="The number of values")
+    step: int = Field(default=1, description="The step of the range")
+
+    def invoke(self, context: InvocationContext) -> IntCollectionOutput:
+        return IntCollectionOutput(
+            collection=list(range(self.start, self.start + self.size, self.step))
+        )
 
 
 class RandomRangeInvocation(BaseInvocation):
@@ -43,8 +76,19 @@ class RandomRangeInvocation(BaseInvocation):
 
     # Inputs
     low: int = Field(default=0, description="The inclusive low value")
-    high: int = Field(default=np.iinfo(np.int32).max, description="The exclusive high value")
+    high: int = Field(
+        default=np.iinfo(np.int32).max, description="The exclusive high value"
+    )
     size: int = Field(default=1, description="The number of values to generate")
+    seed: int = Field(
+        ge=0,
+        le=SEED_MAX,
+        description="The seed for the RNG (omit for random)",
+        default_factory=get_random_seed,
+    )
 
     def invoke(self, context: InvocationContext) -> IntCollectionOutput:
-        return IntCollectionOutput(collection=list(numpy.random.randint(self.low, self.high, size=self.size)))
+        rng = np.random.default_rng(self.seed)
+        return IntCollectionOutput(
+            collection=list(rng.integers(low=self.low, high=self.high, size=self.size))
+        )

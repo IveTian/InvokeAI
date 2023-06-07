@@ -1,55 +1,146 @@
-import { ButtonGroup, Flex, Grid, Icon, Text } from '@chakra-ui/react';
-import { requestImages } from 'app/socketio/actions';
-import { useAppDispatch, useAppSelector } from 'app/storeHooks';
+import {
+  Box,
+  ButtonGroup,
+  Flex,
+  FlexProps,
+  Grid,
+  Icon,
+  Text,
+  forwardRef,
+} from '@chakra-ui/react';
+import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
 import IAIButton from 'common/components/IAIButton';
-import IAICheckbox from 'common/components/IAICheckbox';
+import IAISimpleCheckbox from 'common/components/IAISimpleCheckbox';
 import IAIIconButton from 'common/components/IAIIconButton';
 import IAIPopover from 'common/components/IAIPopover';
 import IAISlider from 'common/components/IAISlider';
-import { imageGallerySelector } from 'features/gallery/store/gallerySelectors';
+import { gallerySelector } from 'features/gallery/store/gallerySelectors';
 import {
-  setCurrentCategory,
   setGalleryImageMinimumWidth,
   setGalleryImageObjectFit,
   setShouldAutoSwitchToNewImages,
   setShouldUseSingleGalleryColumn,
 } from 'features/gallery/store/gallerySlice';
 import { togglePinGalleryPanel } from 'features/ui/store/uiSlice';
+import { useOverlayScrollbars } from 'overlayscrollbars-react';
 
-import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import {
+  ChangeEvent,
+  PropsWithChildren,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { BsPinAngle, BsPinAngleFill } from 'react-icons/bs';
-import { FaImage, FaUser, FaWrench } from 'react-icons/fa';
+import { FaImage, FaServer, FaWrench } from 'react-icons/fa';
 import { MdPhotoLibrary } from 'react-icons/md';
 import HoverableImage from './HoverableImage';
 
-import Scrollable from 'features/ui/components/common/Scrollable';
 import { requestCanvasRescale } from 'features/canvas/store/thunks/requestCanvasScale';
+import { createSelector } from '@reduxjs/toolkit';
+import { RootState } from 'app/store/store';
+import { Virtuoso, VirtuosoGrid } from 'react-virtuoso';
+import { defaultSelectorOptions } from 'app/store/util/defaultMemoizeOptions';
+import { uiSelector } from 'features/ui/store/uiSelectors';
+import {
+  ASSETS_CATEGORIES,
+  IMAGE_CATEGORIES,
+  imageCategoriesChanged,
+  selectImagesAll,
+} from '../store/imagesSlice';
+import { receivedPageOfImages } from 'services/thunks/image';
 
-const GALLERY_SHOW_BUTTONS_MIN_WIDTH = 290;
+const categorySelector = createSelector(
+  [(state: RootState) => state],
+  (state) => {
+    const { images } = state;
+    const { categories } = images;
+
+    const allImages = selectImagesAll(state);
+    const filteredImages = allImages.filter((i) =>
+      categories.includes(i.image_category)
+    );
+
+    return {
+      images: filteredImages,
+      isLoading: images.isLoading,
+      areMoreImagesAvailable: filteredImages.length < images.total,
+      categories: images.categories,
+    };
+  },
+  defaultSelectorOptions
+);
+
+const mainSelector = createSelector(
+  [gallerySelector, uiSelector],
+  (gallery, ui) => {
+    const {
+      galleryImageMinimumWidth,
+      galleryImageObjectFit,
+      shouldAutoSwitchToNewImages,
+      shouldUseSingleGalleryColumn,
+      selectedImage,
+    } = gallery;
+
+    const { shouldPinGallery } = ui;
+
+    return {
+      shouldPinGallery,
+      galleryImageMinimumWidth,
+      galleryImageObjectFit,
+      shouldAutoSwitchToNewImages,
+      shouldUseSingleGalleryColumn,
+      selectedImage,
+    };
+  },
+  defaultSelectorOptions
+);
 
 const ImageGalleryContent = () => {
   const dispatch = useAppDispatch();
   const { t } = useTranslation();
   const resizeObserverRef = useRef<HTMLDivElement>(null);
-  const [shouldShouldIconButtons, setShouldShouldIconButtons] = useState(true);
+  const rootRef = useRef(null);
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const [initialize, osInstance] = useOverlayScrollbars({
+    defer: true,
+    options: {
+      scrollbars: {
+        visibility: 'auto',
+        autoHide: 'leave',
+        autoHideDelay: 1300,
+        theme: 'os-theme-dark',
+      },
+      overflow: { x: 'hidden' },
+    },
+  });
 
   const {
-    images,
-    currentCategory,
-    currentImageUuid,
     shouldPinGallery,
     galleryImageMinimumWidth,
-    galleryGridTemplateColumns,
     galleryImageObjectFit,
     shouldAutoSwitchToNewImages,
-    areMoreImagesAvailable,
     shouldUseSingleGalleryColumn,
-  } = useAppSelector(imageGallerySelector);
+    selectedImage,
+  } = useAppSelector(mainSelector);
 
-  const handleClickLoadMore = () => {
-    dispatch(requestImages(currentCategory));
-  };
+  const { images, areMoreImagesAvailable, isLoading, categories } =
+    useAppSelector(categorySelector);
+
+  const handleLoadMoreImages = useCallback(() => {
+    dispatch(receivedPageOfImages());
+  }, [dispatch]);
+
+  const handleEndReached = useMemo(() => {
+    if (areMoreImagesAvailable && !isLoading) {
+      return handleLoadMoreImages;
+    }
+    return undefined;
+  }, [areMoreImagesAvailable, handleLoadMoreImages, isLoading]);
 
   const handleChangeGalleryImageMinimumWidth = (v: number) => {
     dispatch(setGalleryImageMinimumWidth(v));
@@ -61,87 +152,72 @@ const ImageGalleryContent = () => {
   };
 
   useEffect(() => {
-    if (!resizeObserverRef.current) {
-      return;
+    const { current: root } = rootRef;
+    if (scroller && root) {
+      initialize({
+        target: root,
+        elements: {
+          viewport: scroller,
+        },
+      });
     }
-    const resizeObserver = new ResizeObserver(() => {
-      if (!resizeObserverRef.current) {
-        return;
-      }
+    return () => osInstance()?.destroy();
+  }, [scroller, initialize, osInstance]);
 
-      if (
-        resizeObserverRef.current.clientWidth < GALLERY_SHOW_BUTTONS_MIN_WIDTH
-      ) {
-        setShouldShouldIconButtons(true);
-        return;
-      }
-
-      setShouldShouldIconButtons(false);
-    });
-    resizeObserver.observe(resizeObserverRef.current);
-    return () => resizeObserver.disconnect(); // clean up
+  const setScrollerRef = useCallback((ref: HTMLElement | Window | null) => {
+    if (ref instanceof HTMLElement) {
+      setScroller(ref);
+    }
   }, []);
 
+  const handleClickImagesCategory = useCallback(() => {
+    dispatch(imageCategoriesChanged(IMAGE_CATEGORIES));
+  }, [dispatch]);
+
+  const handleClickAssetsCategory = useCallback(() => {
+    dispatch(imageCategoriesChanged(ASSETS_CATEGORIES));
+  }, [dispatch]);
+
   return (
-    <Flex flexDirection="column" w="full" h="full" gap={4}>
+    <Flex
+      sx={{
+        gap: 2,
+        flexDirection: 'column',
+        h: 'full',
+        w: 'full',
+        borderRadius: 'base',
+      }}
+    >
       <Flex
         ref={resizeObserverRef}
         alignItems="center"
         justifyContent="space-between"
       >
-        <ButtonGroup
-          size="sm"
-          isAttached
-          w="max-content"
-          justifyContent="stretch"
-        >
-          {shouldShouldIconButtons ? (
-            <>
-              <IAIIconButton
-                aria-label={t('gallery.showGenerations')}
-                tooltip={t('gallery.showGenerations')}
-                isChecked={currentCategory === 'result'}
-                role="radio"
-                icon={<FaImage />}
-                onClick={() => dispatch(setCurrentCategory('result'))}
-              />
-              <IAIIconButton
-                aria-label={t('gallery.showUploads')}
-                tooltip={t('gallery.showUploads')}
-                role="radio"
-                isChecked={currentCategory === 'user'}
-                icon={<FaUser />}
-                onClick={() => dispatch(setCurrentCategory('user'))}
-              />
-            </>
-          ) : (
-            <>
-              <IAIButton
-                size="sm"
-                isChecked={currentCategory === 'result'}
-                onClick={() => dispatch(setCurrentCategory('result'))}
-                flexGrow={1}
-              >
-                {t('gallery.generations')}
-              </IAIButton>
-              <IAIButton
-                size="sm"
-                isChecked={currentCategory === 'user'}
-                onClick={() => dispatch(setCurrentCategory('user'))}
-                flexGrow={1}
-              >
-                {t('gallery.uploads')}
-              </IAIButton>
-            </>
-          )}
+        <ButtonGroup isAttached>
+          <IAIIconButton
+            tooltip={t('gallery.images')}
+            aria-label={t('gallery.images')}
+            onClick={handleClickImagesCategory}
+            isChecked={categories === IMAGE_CATEGORIES}
+            size="sm"
+            icon={<FaImage />}
+          />
+          <IAIIconButton
+            tooltip={t('gallery.assets')}
+            aria-label={t('gallery.assets')}
+            onClick={handleClickAssetsCategory}
+            isChecked={categories === ASSETS_CATEGORIES}
+            size="sm"
+            icon={<FaServer />}
+          />
         </ButtonGroup>
-
         <Flex gap={2}>
           <IAIPopover
             triggerComponent={
               <IAIIconButton
-                size="sm"
+                tooltip={t('gallery.gallerySettings')}
                 aria-label={t('gallery.gallerySettings')}
+                size="sm"
                 icon={<FaWrench />}
               />
             }
@@ -157,7 +233,7 @@ const ImageGalleryContent = () => {
                 withReset
                 handleReset={() => dispatch(setGalleryImageMinimumWidth(64))}
               />
-              <IAICheckbox
+              <IAISimpleCheckbox
                 label={t('gallery.maintainAspectRatio')}
                 isChecked={galleryImageObjectFit === 'contain'}
                 onChange={() =>
@@ -168,14 +244,14 @@ const ImageGalleryContent = () => {
                   )
                 }
               />
-              <IAICheckbox
+              <IAISimpleCheckbox
                 label={t('gallery.autoSwitchNewImages')}
                 isChecked={shouldAutoSwitchToNewImages}
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
                   dispatch(setShouldAutoSwitchToNewImages(e.target.checked))
                 }
               />
-              <IAICheckbox
+              <IAISimpleCheckbox
                 label={t('gallery.singleColumnLayout')}
                 isChecked={shouldUseSingleGalleryColumn}
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
@@ -194,64 +270,116 @@ const ImageGalleryContent = () => {
           />
         </Flex>
       </Flex>
-      <Scrollable>
-        <Flex direction="column" gap={2} h="full">
-          {images.length || areMoreImagesAvailable ? (
-            <>
-              <Grid
-                gap={2}
-                style={{ gridTemplateColumns: galleryGridTemplateColumns }}
-              >
-                {images.map((image) => {
-                  const { uuid } = image;
-                  const isSelected = currentImageUuid === uuid;
-                  return (
+      <Flex direction="column" gap={2} h="full">
+        {images.length || areMoreImagesAvailable ? (
+          <>
+            <Box ref={rootRef} data-overlayscrollbars="" h="100%">
+              {shouldUseSingleGalleryColumn ? (
+                <Virtuoso
+                  style={{ height: '100%' }}
+                  data={images}
+                  endReached={handleEndReached}
+                  scrollerRef={(ref) => setScrollerRef(ref)}
+                  itemContent={(index, image) => (
+                    <Flex sx={{ pb: 2 }}>
+                      <HoverableImage
+                        key={`${image.image_name}-${image.thumbnail_url}`}
+                        image={image}
+                        isSelected={
+                          selectedImage?.image_name === image?.image_name
+                        }
+                      />
+                    </Flex>
+                  )}
+                />
+              ) : (
+                <VirtuosoGrid
+                  style={{ height: '100%' }}
+                  data={images}
+                  endReached={handleEndReached}
+                  components={{
+                    Item: ItemContainer,
+                    List: ListContainer,
+                  }}
+                  scrollerRef={setScroller}
+                  itemContent={(index, image) => (
                     <HoverableImage
-                      key={uuid}
+                      key={`${image.image_name}-${image.thumbnail_url}`}
                       image={image}
-                      isSelected={isSelected}
+                      isSelected={
+                        selectedImage?.image_name === image?.image_name
+                      }
                     />
-                  );
-                })}
-              </Grid>
-              <IAIButton
-                onClick={handleClickLoadMore}
-                isDisabled={!areMoreImagesAvailable}
-                flexShrink={0}
-              >
-                {areMoreImagesAvailable
-                  ? t('gallery.loadMore')
-                  : t('gallery.allImagesLoaded')}
-              </IAIButton>
-            </>
-          ) : (
-            <Flex
-              sx={{
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 2,
-                padding: 8,
-                h: '100%',
-                w: '100%',
-                color: 'base.500',
-              }}
+                  )}
+                />
+              )}
+            </Box>
+            <IAIButton
+              onClick={handleLoadMoreImages}
+              isDisabled={!areMoreImagesAvailable}
+              isLoading={isLoading}
+              loadingText="Loading"
+              flexShrink={0}
             >
-              <Icon
-                as={MdPhotoLibrary}
-                sx={{
-                  w: 16,
-                  h: 16,
-                }}
-              />
-              <Text textAlign="center">{t('gallery.noImagesInGallery')}</Text>
-            </Flex>
-          )}
-        </Flex>
-      </Scrollable>
+              {areMoreImagesAvailable
+                ? t('gallery.loadMore')
+                : t('gallery.allImagesLoaded')}
+            </IAIButton>
+          </>
+        ) : (
+          <Flex
+            sx={{
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 2,
+              padding: 8,
+              h: '100%',
+              w: '100%',
+              color: 'base.500',
+            }}
+          >
+            <Icon
+              as={MdPhotoLibrary}
+              sx={{
+                w: 16,
+                h: 16,
+              }}
+            />
+            <Text textAlign="center">{t('gallery.noImagesInGallery')}</Text>
+          </Flex>
+        )}
+      </Flex>
     </Flex>
   );
 };
 
-ImageGalleryContent.displayName = 'ImageGalleryContent';
-export default ImageGalleryContent;
+type ItemContainerProps = PropsWithChildren & FlexProps;
+const ItemContainer = forwardRef((props: ItemContainerProps, ref) => (
+  <Box className="item-container" ref={ref}>
+    {props.children}
+  </Box>
+));
+
+type ListContainerProps = PropsWithChildren & FlexProps;
+const ListContainer = forwardRef((props: ListContainerProps, ref) => {
+  const galleryImageMinimumWidth = useAppSelector(
+    (state: RootState) => state.gallery.galleryImageMinimumWidth
+  );
+
+  return (
+    <Grid
+      {...props}
+      className="list-container"
+      ref={ref}
+      sx={{
+        gap: 2,
+        gridTemplateColumns: `repeat(auto-fit, minmax(${galleryImageMinimumWidth}px, 1fr));`,
+      }}
+    >
+      {props.children}
+    </Grid>
+  );
+});
+
+export default memo(ImageGalleryContent);

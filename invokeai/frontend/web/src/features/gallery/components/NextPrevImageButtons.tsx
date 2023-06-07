@@ -1,16 +1,18 @@
 import { ChakraProps, Flex, Grid, IconButton } from '@chakra-ui/react';
 import { createSelector } from '@reduxjs/toolkit';
-import { useAppDispatch, useAppSelector } from 'app/storeHooks';
-import { isEqual } from 'lodash';
-import { useState } from 'react';
+import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
+import { clamp, isEqual } from 'lodash-es';
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FaAngleLeft, FaAngleRight } from 'react-icons/fa';
 import { gallerySelector } from '../store/gallerySelectors';
+import { RootState } from 'app/store/store';
+import { imageSelected } from '../store/gallerySlice';
+import { useHotkeys } from 'react-hotkeys-hook';
 import {
-  GalleryCategory,
-  selectNextImage,
-  selectPrevImage,
-} from '../store/gallerySlice';
+  selectFilteredImagesAsObject,
+  selectFilteredImagesIds,
+} from '../store/imagesSlice';
 
 const nextPrevButtonTriggerAreaStyles: ChakraProps['sx'] = {
   height: '100%',
@@ -23,24 +25,52 @@ const nextPrevButtonStyles: ChakraProps['sx'] = {
 };
 
 export const nextPrevImageButtonsSelector = createSelector(
-  gallerySelector,
-  (gallery) => {
-    const { currentImage } = gallery;
+  [
+    (state: RootState) => state,
+    gallerySelector,
+    selectFilteredImagesAsObject,
+    selectFilteredImagesIds,
+  ],
+  (state, gallery, filteredImagesAsObject, filteredImageIds) => {
+    const { selectedImage } = gallery;
 
-    const tempImages =
-      gallery.categories[
-        currentImage ? (currentImage.category as GalleryCategory) : 'result'
-      ].images;
+    if (!selectedImage) {
+      return {
+        isOnFirstImage: true,
+        isOnLastImage: true,
+      };
+    }
 
-    const currentImageIndex = tempImages.findIndex(
-      (i) => i.uuid === gallery?.currentImage?.uuid
+    const currentImageIndex = filteredImageIds.findIndex(
+      (i) => i === selectedImage.image_name
     );
-    const imagesLength = tempImages.length;
+
+    const nextImageIndex = clamp(
+      currentImageIndex + 1,
+      0,
+      filteredImageIds.length - 1
+    );
+
+    const prevImageIndex = clamp(
+      currentImageIndex - 1,
+      0,
+      filteredImageIds.length - 1
+    );
+
+    const nextImageId = filteredImageIds[nextImageIndex];
+    const prevImageId = filteredImageIds[prevImageIndex];
+
+    const nextImage = filteredImagesAsObject[nextImageId];
+    const prevImage = filteredImagesAsObject[prevImageId];
+
+    const imagesLength = filteredImageIds.length;
 
     return {
       isOnFirstImage: currentImageIndex === 0,
       isOnLastImage:
         !isNaN(currentImageIndex) && currentImageIndex === imagesLength - 1,
+      nextImage,
+      prevImage,
     };
   },
   {
@@ -54,34 +84,48 @@ const NextPrevImageButtons = () => {
   const dispatch = useAppDispatch();
   const { t } = useTranslation();
 
-  const { isOnFirstImage, isOnLastImage } = useAppSelector(
-    nextPrevImageButtonsSelector
-  );
+  const { isOnFirstImage, isOnLastImage, nextImage, prevImage } =
+    useAppSelector(nextPrevImageButtonsSelector);
 
   const [shouldShowNextPrevButtons, setShouldShowNextPrevButtons] =
     useState<boolean>(false);
 
-  const handleCurrentImagePreviewMouseOver = () => {
+  const handleCurrentImagePreviewMouseOver = useCallback(() => {
     setShouldShowNextPrevButtons(true);
-  };
+  }, []);
 
-  const handleCurrentImagePreviewMouseOut = () => {
+  const handleCurrentImagePreviewMouseOut = useCallback(() => {
     setShouldShowNextPrevButtons(false);
-  };
+  }, []);
 
-  const handleClickPrevButton = () => {
-    dispatch(selectPrevImage());
-  };
+  const handlePrevImage = useCallback(() => {
+    dispatch(imageSelected(prevImage));
+  }, [dispatch, prevImage]);
 
-  const handleClickNextButton = () => {
-    dispatch(selectNextImage());
-  };
+  const handleNextImage = useCallback(() => {
+    dispatch(imageSelected(nextImage));
+  }, [dispatch, nextImage]);
+
+  useHotkeys(
+    'left',
+    () => {
+      handlePrevImage();
+    },
+    [prevImage]
+  );
+
+  useHotkeys(
+    'right',
+    () => {
+      handleNextImage();
+    },
+    [nextImage]
+  );
 
   return (
     <Flex
       sx={{
         justifyContent: 'space-between',
-        zIndex: 1,
         height: '100%',
         width: '100%',
         pointerEvents: 'none',
@@ -100,7 +144,7 @@ const NextPrevImageButtons = () => {
             aria-label={t('accessibility.previousImage')}
             icon={<FaAngleLeft size={64} />}
             variant="unstyled"
-            onClick={handleClickPrevButton}
+            onClick={handlePrevImage}
             boxSize={16}
             sx={nextPrevButtonStyles}
           />
@@ -119,7 +163,7 @@ const NextPrevImageButtons = () => {
             aria-label={t('accessibility.nextImage')}
             icon={<FaAngleRight size={64} />}
             variant="unstyled"
-            onClick={handleClickNextButton}
+            onClick={handleNextImage}
             boxSize={16}
             sx={nextPrevButtonStyles}
           />

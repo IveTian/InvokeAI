@@ -2,14 +2,15 @@
 
 from abc import ABC, abstractmethod
 import argparse
-from typing import Any, Callable, Iterable, Literal, get_args, get_origin, get_type_hints
+from typing import Any, Callable, Iterable, Literal, Union, get_args, get_origin, get_type_hints
 from pydantic import BaseModel, Field
 import networkx as nx
 import matplotlib.pyplot as plt
 
+import invokeai.backend.util.logging as logger
 from ..invocations.baseinvocation import BaseInvocation
 from ..invocations.image import ImageField
-from ..services.graph import GraphExecutionState, LibraryGraph, GraphInvocation, Edge
+from ..services.graph import GraphExecutionState, LibraryGraph, Edge
 from ..services.invoker import Invoker
 
 
@@ -229,7 +230,7 @@ class HistoryCommand(BaseCommand):
         for i in range(min(self.count, len(history))):
             entry_id = history[-1 - i]
             entry = context.get_session().graph.get_node(entry_id)
-            print(f"{entry_id}: {get_invocation_command(entry)}")
+            logger.info(f"{entry_id}: {get_invocation_command(entry)}")
 
 
 class SetDefaultCommand(BaseCommand):
@@ -284,3 +285,19 @@ class DrawExecutionGraphCommand(BaseCommand):
         nx.draw_networkx_labels(nxgraph, pos, font_size=20, font_family="sans-serif")
         plt.axis("off")
         plt.show()
+
+class SortedHelpFormatter(argparse.HelpFormatter):
+    def _iter_indented_subactions(self, action):
+        try:
+            get_subactions = action._get_subactions
+        except AttributeError:
+            pass
+        else:
+            self._indent()
+            if isinstance(action, argparse._SubParsersAction):
+                for subaction in sorted(get_subactions(), key=lambda x: x.dest):
+                    yield subaction
+            else:
+                for subaction in get_subactions():
+                    yield subaction
+                self._dedent()

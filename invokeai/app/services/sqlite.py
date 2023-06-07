@@ -26,7 +26,6 @@ class SqliteItemStorage(ItemStorageABC, Generic[T]):
         self._table_name = table_name
         self._id_field = id_field  # TODO: validate that T has this field
         self._lock = Lock()
-
         self._conn = sqlite3.connect(
             self._filename, check_same_thread=False
         )  # TODO: figure out a better threading solution
@@ -35,7 +34,8 @@ class SqliteItemStorage(ItemStorageABC, Generic[T]):
         self._create_table()
 
     def _create_table(self):
-        with self._lock:
+        try:
+            self._lock.acquire()
             self._cursor.execute(
                 f"""CREATE TABLE IF NOT EXISTS {self._table_name} (
                 item TEXT,
@@ -44,27 +44,34 @@ class SqliteItemStorage(ItemStorageABC, Generic[T]):
             self._cursor.execute(
                 f"""CREATE UNIQUE INDEX IF NOT EXISTS {self._table_name}_id ON {self._table_name}(id);"""
             )
-            self._conn.commit()
+        finally:
+            self._lock.release()
 
     def _parse_item(self, item: str) -> T:
         item_type = get_args(self.__orig_class__)[0]
         return parse_raw_as(item_type, item)
 
     def set(self, item: T):
-        with self._lock:
+        try:
+            self._lock.acquire()
             self._cursor.execute(
                 f"""INSERT OR REPLACE INTO {self._table_name} (item) VALUES (?);""",
                 (item.json(),),
             )
             self._conn.commit()
+        finally:
+            self._lock.release()
         self._on_changed(item)
 
     def get(self, id: str) -> Union[T, None]:
-        with self._lock:
+        try:
+            self._lock.acquire()
             self._cursor.execute(
                 f"""SELECT item FROM {self._table_name} WHERE id = ?;""", (str(id),)
             )
             result = self._cursor.fetchone()
+        finally:
+            self._lock.release()
 
         if not result:
             return None
@@ -72,15 +79,19 @@ class SqliteItemStorage(ItemStorageABC, Generic[T]):
         return self._parse_item(result[0])
 
     def delete(self, id: str):
-        with self._lock:
+        try:
+            self._lock.acquire()
             self._cursor.execute(
                 f"""DELETE FROM {self._table_name} WHERE id = ?;""", (str(id),)
             )
             self._conn.commit()
+        finally:
+            self._lock.release()
         self._on_deleted(id)
 
     def list(self, page: int = 0, per_page: int = 10) -> PaginatedResults[T]:
-        with self._lock:
+        try:
+            self._lock.acquire()
             self._cursor.execute(
                 f"""SELECT item FROM {self._table_name} LIMIT ? OFFSET ?;""",
                 (per_page, page * per_page),
@@ -91,6 +102,8 @@ class SqliteItemStorage(ItemStorageABC, Generic[T]):
 
             self._cursor.execute(f"""SELECT count(*) FROM {self._table_name};""")
             count = self._cursor.fetchone()[0]
+        finally:
+            self._lock.release()
 
         pageCount = int(count / per_page) + 1
 
@@ -101,7 +114,8 @@ class SqliteItemStorage(ItemStorageABC, Generic[T]):
     def search(
         self, query: str, page: int = 0, per_page: int = 10
     ) -> PaginatedResults[T]:
-        with self._lock:
+        try:
+            self._lock.acquire()
             self._cursor.execute(
                 f"""SELECT item FROM {self._table_name} WHERE item LIKE ? LIMIT ? OFFSET ?;""",
                 (f"%{query}%", per_page, page * per_page),
@@ -115,6 +129,8 @@ class SqliteItemStorage(ItemStorageABC, Generic[T]):
                 (f"%{query}%",),
             )
             count = self._cursor.fetchone()[0]
+        finally:
+            self._lock.release()
 
         pageCount = int(count / per_page) + 1
 

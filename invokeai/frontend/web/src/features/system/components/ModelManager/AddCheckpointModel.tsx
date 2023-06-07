@@ -10,22 +10,22 @@ import {
 } from '@chakra-ui/react';
 
 import IAIButton from 'common/components/IAIButton';
-import IAICheckbox from 'common/components/IAICheckbox';
+import IAISimpleCheckbox from 'common/components/IAISimpleCheckbox';
 import IAIInput from 'common/components/IAIInput';
 import IAINumberInput from 'common/components/IAINumberInput';
 import React from 'react';
 
 import SearchModels from './SearchModels';
 
-import { addNewModel } from 'app/socketio/actions';
+// import { addNewModel } from 'app/socketio/actions';
 
-import { useAppDispatch, useAppSelector } from 'app/storeHooks';
+import { useAppDispatch, useAppSelector } from 'app/store/storeHooks';
 
 import { Field, Formik } from 'formik';
 import { useTranslation } from 'react-i18next';
 
-import type { InvokeModelConfigProps } from 'app/invokeai';
-import type { RootState } from 'app/store';
+import type { InvokeModelConfigProps } from 'app/types/invokeai';
+import type { RootState } from 'app/store/store';
 import { setAddNewModelUIOption } from 'features/ui/store/uiSlice';
 import type { FieldInputProps, FormikProps } from 'formik';
 import IAIForm from 'common/components/IAIForm';
@@ -74,12 +74,12 @@ export default function AddCheckpointModel() {
   return (
     <VStack gap={2} alignItems="flex-start">
       <Flex columnGap={4}>
-        <IAICheckbox
+        <IAISimpleCheckbox
           isChecked={!addManually}
           label={t('modelManager.scanForModels')}
           onChange={() => setAddmanually(!addManually)}
         />
-        <IAICheckbox
+        <IAISimpleCheckbox
           label={t('modelManager.addManually')}
           isChecked={addManually}
           onChange={() => setAddmanually(!addManually)}
